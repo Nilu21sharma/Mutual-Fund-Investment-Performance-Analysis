@@ -18,7 +18,7 @@ India's mutual fund industry has grown rapidly. Investors can now choose from hu
 
 ## 4. Scope: Fund Universe
 
-The study covers **88 open-ended equity mutual funds** (Direct Plan, Growth option) from **11 categories**. The fund list follows the reference case study ([NagaBhagavan/Power-Bi-Project](https://github.com/NagaBhagavan/Power-Bi-Project)).
+The study covers **88 open-ended equity mutual funds** (Direct Plan, Growth option) from **11 categories**.
 
 | Category | Funds |
 |---|---:|
