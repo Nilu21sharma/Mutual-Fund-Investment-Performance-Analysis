@@ -1,15 +1,16 @@
 """
-Step 2 - Download the full daily NAV history of every fund in config/fund_universe.csv.
+Step 2 - Download the last 5 years of daily NAV for every fund in config/fund_universe.csv.
 
-Source : AMFI (Association of Mutual Funds in India) NAV data, via https://api.mfapi.in/mf/<scheme_code>
+Source : AMFI NAV history, via https://api.mfapi.in/mf/<scheme_code>
+Window : 5 years back from the run date (e.g. 2021-09-25 -> 2026-09-25)
 Output :
-    data/raw/nav/<scheme_code>.csv     one file per fund  (date, nav)
-    data/raw/nav_history_all.csv       all funds stacked  (scheme_code, date, nav)
-    data/raw/scheme_master.csv         fund metadata      (AMC, AMFI category, ISIN, date range ...)
+    data/raw/nav_history.csv     fact table   (scheme_code, date, nav)
+    data/raw/scheme_master.csv   fund details (fund universe + NAV date range, record count, latest NAV)
 """
 import csv
 import time
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime
 from pathlib import Path
 
 import requests
@@ -17,74 +18,94 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 UNIVERSE = ROOT / "config" / "fund_universe.csv"
 RAW = ROOT / "data" / "raw"
-NAV_DIR = RAW / "nav"
 API = "https://api.mfapi.in/mf/{}"
+YEARS = 5
+WORKERS = 6
+ACTIVE_WITHIN_DAYS = 15
+
+END = date.today()
+try:
+    START = END.replace(year=END.year - YEARS)
+except ValueError:                      # 29 Feb
+    START = END.replace(year=END.year - YEARS, day=28)
 
 
-def fetch(code, retries=3):
+def fetch(code, retries=4):
     for attempt in range(retries):
         try:
-            r = requests.get(API.format(code), timeout=60)
+            r = requests.get(API.format(code), timeout=(15, 90))
             r.raise_for_status()
             return r.json()
-        except requests.RequestException:
+        except (requests.RequestException, ValueError):
             if attempt == retries - 1:
                 raise
-            time.sleep(2 * (attempt + 1))
+            time.sleep(2 ** attempt)
+
+
+def download(fund):
+    payload = fetch(fund["scheme_code"])
+    navs = []
+    for d in payload.get("data", []):
+        day = datetime.strptime(d["date"], "%d-%m-%Y").date()
+        nav = float(d["nav"])
+        if START <= day <= END and nav > 0:          # zero NAVs appear after a scheme is wound up
+            navs.append((day.isoformat(), nav))
+    navs.sort()
+    return fund, navs
 
 
 def main():
-    NAV_DIR.mkdir(parents=True, exist_ok=True)
+    RAW.mkdir(parents=True, exist_ok=True)
     with UNIVERSE.open(encoding="utf-8") as f:
         funds = list(csv.DictReader(f))
+    print(f"Downloading {len(funds)} funds, NAVs from {START} to {END} ...")
 
-    master_rows, all_rows = [], []
-    for i, fund in enumerate(funds, 1):
-        code = fund["scheme_code"]
-        payload = fetch(code)
-        meta = payload["meta"]
-        # API returns newest first, dd-mm-yyyy -> store oldest first, ISO dates
-        navs = sorted(
-            (datetime.strptime(d["date"], "%d-%m-%Y").date().isoformat(), float(d["nav"]))
-            for d in payload["data"]
-        )
+    results, failed = {}, []
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        futures = {pool.submit(download, f): f for f in funds}
+        for i, fut in enumerate(as_completed(futures), 1):
+            fund = futures[fut]
+            try:
+                _, navs = fut.result()
+                results[fund["scheme_code"]] = navs
+            except Exception as e:
+                failed.append(fund["scheme_code"])
+                print(f"  FAILED {fund['scheme_code']} {fund['scheme_name']}: {e}")
+            if i % 100 == 0:
+                print(f"  {i}/{len(funds)} done")
 
-        with (NAV_DIR / f"{code}.csv").open("w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(["date", "nav"])
-            w.writerows(navs)
-        all_rows.extend((code, d, n) for d, n in navs)
-
-        master_rows.append({
-            "scheme_code": code,
-            "scheme_name": fund["scheme_name"],
-            "amfi_scheme_name": meta["scheme_name"],
-            "category": fund["category"],
-            "amfi_category": meta["scheme_category"],
-            "fund_house": meta["fund_house"],
-            "scheme_type": meta["scheme_type"],
-            "plan": "Direct",
-            "option": "Growth",
-            "isin_growth": meta.get("isin_growth") or "",
-            "first_nav_date": navs[0][0],
-            "last_nav_date": navs[-1][0],
-            "nav_records": len(navs),
-            "latest_nav": navs[-1][1],
-        })
-        print(f"[{i:>2}/{len(funds)}] {code}  {len(navs):>5} rows  {navs[0][0]} -> {navs[-1][0]}  {fund['scheme_name']}")
-        time.sleep(0.3)  # be polite to the free API
+    master_rows, nav_rows = [], 0
+    with (RAW / "nav_history.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["scheme_code", "date", "nav"])
+        for fund in funds:                                  # keep universe order
+            navs = results.get(fund["scheme_code"])
+            if not navs:
+                continue
+            w.writerows((fund["scheme_code"], d, n) for d, n in navs)
+            nav_rows += len(navs)
+            master_rows.append({
+                **fund,
+                "first_nav_date": navs[0][0],
+                "last_nav_date": navs[-1][0],
+                "nav_records": len(navs),
+                "latest_nav": navs[-1][1],
+                # merged / wound-up schemes stay in AMFI's list but stop publishing NAVs
+                "status": "Active" if (END - date.fromisoformat(navs[-1][0])).days <= ACTIVE_WITHIN_DAYS
+                else "Inactive",
+            })
 
     with (RAW / "scheme_master.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(master_rows[0]))
         w.writeheader()
         w.writerows(master_rows)
 
-    with (RAW / "nav_history_all.csv").open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["scheme_code", "date", "nav"])
-        w.writerows(all_rows)
-
-    print(f"\nDone: {len(master_rows)} funds, {len(all_rows):,} NAV records -> {RAW}")
+    no_data = [f["scheme_code"] for f in funds if f["scheme_code"] in results and not results[f["scheme_code"]]]
+    print(f"\nDone: {len(master_rows)} funds, {nav_rows:,} NAV records -> {RAW}")
+    if no_data:
+        print(f"No NAV inside the window (skipped): {no_data}")
+    if failed:
+        print(f"Download failed (re-run to retry): {failed}")
 
 
 if __name__ == "__main__":

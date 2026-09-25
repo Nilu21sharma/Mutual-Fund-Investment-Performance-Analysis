@@ -1,30 +1,36 @@
 # Mutual Fund Investment Performance Analysis
 
-An end-to-end analysis of **88 Indian equity mutual funds** (Direct Plan, Growth) across **11 categories**: ELSS, Flexi Cap, Large Cap, Large & Mid Cap, Mid Cap, Small Cap, Multi Cap, Focused, Value, Contra and Sectoral/Thematic. The project measures returns over 1W to 10Y, assesses risk, and presents the results in an interactive Power BI dashboard.
+An end-to-end analysis of **1,000 Indian mutual funds** (Direct Plan, Growth) across **Equity, Debt and Hybrid** asset classes and **36 SEBI categories**. The project measures returns over 1W to 5Y, assesses risk, and presents the results in an interactive Power BI dashboard.
 
 📄 **Full case study:** [CASE_STUDY.md](CASE_STUDY.md)
 
-## Data Source
+## Dataset at a Glance
 
-Daily NAV history comes from **AMFI (Association of Mutual Funds in India)** via the free [mfapi.in](https://www.mfapi.in/) API.
+| Asset Class | Funds | Categories |
+|---|---:|---:|
+| Equity | 580 | 12 |
+| Debt | 232 | 17 |
+| Hybrid | 188 | 7 |
+| **Total** | **1,000** | **36** |
 
-- **Coverage:** Jan 2013 to 25 Sep 2026
-- **Volume:** 88 funds, 251,688 daily NAV records
+- **Source:** official AMFI (Association of Mutual Funds in India) data, with NAV history fetched through [mfapi.in](https://www.mfapi.in/)
+- **Period:** last 5 years, **25 Sep 2021 to 25 Sep 2026**
+- **Volume:** 968,578 daily NAV records
 
 ## Project Structure
 
 ```
 ├── CASE_STUDY.md                     # Problem statement, scope, data dictionary, analysis plan
 ├── config/
-│   └── fund_universe.csv             # 88 funds: name, category, AMFI scheme code
+│   ├── fund_universe.csv             # All Direct-Growth Equity/Debt/Hybrid schemes (built by script 01)
+│   └── reference_funds.csv           # 88-fund equity focus list (flagged in the data)
 ├── scripts/
-│   ├── 01_map_scheme_codes.py        # Maps fund names to AMFI scheme codes
-│   └── 02_download_nav_history.py    # Downloads full daily NAV history
+│   ├── 01_build_fund_universe.py     # Builds the fund list from AMFI's NAV file and scheme master
+│   └── 02_download_nav_history.py    # Downloads the last 5 years of daily NAVs
 ├── data/
 │   └── raw/
-│       ├── scheme_master.csv         # Fund metadata (AMC, category, ISIN, date range)
-│       ├── nav_history_all.csv       # All NAVs: scheme_code, date, nav
-│       └── nav/<scheme_code>.csv     # One NAV file per fund
+│       ├── scheme_master.csv         # 1 row per fund: AMC, asset class, category, launch date, status ...
+│       └── nav_history.csv           # 1 row per fund per day: scheme_code, date, nav
 └── requirements.txt
 ```
 
@@ -32,15 +38,15 @@ Daily NAV history comes from **AMFI (Association of Mutual Funds in India)** via
 
 ```bash
 pip install -r requirements.txt
-python scripts/01_map_scheme_codes.py      # only needed if config/fund_universe.csv changes
-python scripts/02_download_nav_history.py  # re-downloads the latest NAVs
+python scripts/01_build_fund_universe.py    # rebuilds the fund list from AMFI
+python scripts/02_download_nav_history.py   # downloads the last 5 years of NAVs (takes about 3 minutes)
 ```
 
 ## Roadmap
 
 - [x] Define case study and fund universe
-- [x] Download raw NAV data from AMFI
-- [ ] Data cleaning and return calculation (1W, 1M, 3M, 6M, YTD, 1Y, 2Y, 3Y, 5Y, 10Y)
+- [x] Download raw NAV data from AMFI (Equity, Debt, Hybrid; 5 years)
+- [ ] Data cleaning and return calculation (1W, 1M, 3M, 6M, YTD, 1Y, 2Y, 3Y, 5Y)
 - [ ] Risk metrics (volatility, max drawdown, Sharpe) and Low / Medium / High classification
 - [ ] Power BI dashboard (Overview, Performance, Risk vs Return, Fund Deep-Dive)
 - [ ] Insights and recommendations
@@ -48,7 +54,5 @@ python scripts/02_download_nav_history.py  # re-downloads the latest NAVs
 ## Tools
 
 Python · Excel / Power Query · Power BI (DAX) · Git
-
-
 
 > *For educational purposes only. Not investment advice.*
